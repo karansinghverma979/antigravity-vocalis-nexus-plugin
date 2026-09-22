@@ -22,13 +22,15 @@ from vocalis.jobs.registry import JobRegistry
 from vocalis.tools.notifications import play_completion_chime
 
 
-# Maps agent names to the agy command or script to invoke
+# Maps agent names to the native agy command syntax
 _AGENT_COMMANDS: dict[str, list[str]] = {
-    "win_janitor": ["agy", "run", "--skill", "win-janitor", "--prompt"],
-    "campaigns": ["agy", "run", "--skill", "campaigns", "--prompt"],
-    "repo_architect": ["agy", "run", "--skill", "repo-architect", "--prompt"],
-    "research": ["agy", "run", "--skill", "research", "--prompt"],
-    "general_worker": ["agy", "run", "--prompt"],
+    "win_janitor": ["agy", "--agent", "win_janitor", "--dangerously-skip-permissions", "-p"],
+    "campaigns": ["agy", "--agent", "campaigns", "--dangerously-skip-permissions", "-p"],
+    "repo_architect": ["agy", "--agent", "repo_architect", "--dangerously-skip-permissions", "-p"],
+    "google_workspace": ["agy", "--agent", "google_workspace", "--dangerously-skip-permissions", "-p"],
+    "play_console": ["agy", "--agent", "play_console", "--dangerously-skip-permissions", "-p"],
+    "telegram_nexus": ["agy", "--agent", "telegram_nexus", "--dangerously-skip-permissions", "-p"],
+    "general_worker": ["agy", "--dangerously-skip-permissions", "-p"],
 }
 
 

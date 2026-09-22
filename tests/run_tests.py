@@ -73,19 +73,25 @@ def _():
 
 @test("Dispatcher: Split-brain tool router (dispatch_job & telemetry)")
 def _():
-    from vocalis.core.dispatcher import handle_tool_call
-    from vocalis.config import cfg
-    with tempfile.TemporaryDirectory() as td:
-        cfg.JOBS_FILE = Path(td) / "jobs.json"
-        res = json.loads(handle_tool_call("dispatch_job", {
-            "target_agent": "repo_architect",
-            "title": "Audit repo",
-            "prompt": "Run full check",
-        }))
-        assert res["job_id"].startswith("JOB-")
-        assert res["status"] == "queued"
-        tel = json.loads(handle_tool_call("get_system_telemetry", {"metric": "ram"}))
-        assert isinstance(tel, dict)
+    import vocalis.jobs.worker as worker_mod
+    orig = worker_mod.spawn_worker
+    worker_mod.spawn_worker = lambda job: None
+    try:
+        from vocalis.core.dispatcher import handle_tool_call
+        from vocalis.config import cfg
+        with tempfile.TemporaryDirectory() as td:
+            cfg.JOBS_FILE = Path(td) / "jobs.json"
+            res = json.loads(handle_tool_call("dispatch_job", {
+                "target_agent": "repo_architect",
+                "title": "Audit repo",
+                "prompt": "Run full check",
+            }))
+            assert res["job_id"].startswith("JOB-")
+            assert res["status"] == "queued"
+            tel = json.loads(handle_tool_call("get_system_telemetry", {"metric": "ram"}))
+            assert isinstance(tel, dict)
+    finally:
+        worker_mod.spawn_worker = orig
 
 
 @test("Notifications: Pure Python PCM tone synthesis")

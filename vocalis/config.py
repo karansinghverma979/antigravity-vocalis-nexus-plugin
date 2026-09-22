@@ -39,23 +39,15 @@ elif _LOCAL_ENV.exists():
     load_dotenv(_LOCAL_ENV, override=False)
 
 
-def _require(key: str) -> str:
-    """Get an env var or abort loudly."""
-    val = os.environ.get(key, "").strip()
-    if not val:
-        console.print(
-            f"[bold red]❌ MISSING CONFIG: {key} is not set.[/bold red]\n"
-            f"   Set it in: {_VAULT_ENV}\n"
-            f"   Or copy .env.example → .env and fill in values."
-        )
-        sys.exit(1)
-    return val
+def _get_env(key: str, default: str = "") -> str:
+    """Get an env var gracefully."""
+    return os.environ.get(key, default).strip()
 
 
 class Config:
     """Single source of truth for all runtime settings."""
 
-    GEMINI_API_KEY: str = _require("GEMINI_API_KEY")
+    GEMINI_API_KEY: str = _get_env("GEMINI_API_KEY")
     WAKE_WORD: str = os.environ.get("VOCALIS_WAKE_WORD", "hey_jarvis")
     VOICE: str = os.environ.get("VOCALIS_VOICE", "Puck")
     DEFAULT_MODE: str = os.environ.get("VOCALIS_MODE", "loop")

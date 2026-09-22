@@ -98,6 +98,20 @@ TOOLS = [
         },
     },
     {
+        "name": "vocalis_speak",
+        "description": "Speak a message aloud through the workstation speakers using native speech synthesis (0 tokens).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text message to vocalize aloud",
+                }
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "vocalis_play_chime",
         "description": "Play an acoustic notification tone on the host workstation speakers.",
         "inputSchema": {
@@ -182,6 +196,15 @@ def handle_call_tool(name: str, arguments: dict) -> list[dict]:
         return [{
             "type": "text",
             "text": json.dumps({"success": ok, "job_id": job_id})
+        }]
+
+    elif name == "vocalis_speak":
+        from vocalis.tools.speak import speak_text
+        text = arguments.get("text", "")
+        ok = speak_text(text)
+        return [{
+            "type": "text",
+            "text": json.dumps({"status": "spoken" if ok else "failed", "text": text}, indent=2)
         }]
 
     elif name == "vocalis_play_chime":

@@ -5,7 +5,7 @@ description: Sovereign ambient voice-to-voice AI assistant, local wake-word sent
 
 # 🎙️ Vocalis-Nexus Skill
 
-The `/vocalis-nexus` skill provides complete control over Karan's ambient voice assistant, background task delegation, and acoustic notifications on Motobook.
+The `/vocalis-nexus` skill provides complete control over Karan's ambient voice assistant, background task delegation, and acoustic notifications on Motobook workstation.
 
 ---
 
@@ -13,39 +13,55 @@ The `/vocalis-nexus` skill provides complete control over Karan's ambient voice 
 
 | Command | Action |
 | :--- | :--- |
-| **`/vocalis-nexus status`** | Check daemon health, model, active wake word, and job counts. |
-| **`/vocalis-nexus direct`** | Single-shot push-to-talk: wake $\rightarrow$ query $\rightarrow$ voice answer $\rightarrow$ disarm. |
-| **`/vocalis-nexus loop`** | Full-duplex ambient listening loop with automatic silence timeout. |
-| **`/vocalis-nexus jobs`** | Display active and completed background worker tickets. |
+| **`/vocalis-nexus start`** | Launch the continuous ambient sentinel loop (`voice_wait.py` in background). |
+| **`/vocalis-nexus pull`** *(or `direct`)* | Single-shot push-to-talk: listen immediately $\rightarrow$ voice answer $\rightarrow$ disarm (0 bg processes). |
+| **`/vocalis-nexus speak <text>`** | Speak a message aloud through laptop speakers using native Windows TTS (0 tokens). |
+| **`/vocalis-nexus stop`** | Cleanly terminate the background voice listener trigger. |
+| **`/vocalis-nexus status`** | Check daemon health, microphone state, and recent voice jobs. |
 | **`/vocalis-nexus chime [wake|completion|error]`** | Test audio speaker output and notification chords. |
 
 ---
 
-## 🏛️ Architecture Overview
+## 🏛️ System Architecture: 100% Telegram-Nexus Parity
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│  LAYER 0: LOCAL EAR (Offline, 0 Tokens, <1.5% CPU)          │
-│  Mic ──► Silero VAD ──► openWakeWord ONNX ("Hey Jarvis")     │
-└──────────────────────────┬───────────────────────────────────┘
-                           │ Wake Detected
-                           ▼
-┌──────────────────────────────────────────────────────────────┐
-│  LAYER 1: REAL-TIME VOCAL BRAIN (Gemini Live API WebSocket)  │
-│  Model: gemini-3.1-flash-live-preview (PCM In / Out)         │
-│  Latency: <700ms | Native Barge-In | Synchronous Tools       │
-└─────────────┬────────────────────────────────┬───────────────┘
-              │                                │
-     [Fast-Path Query]                 [Heavy-Path Work]
-              │                                │
-              ▼                                ▼
-     Instant Spoken Answer            ┌────────────────────────┐
-     ("RAM is at 41%, sir.")          │ LAYER 2: WORKER SWARM  │
-                                      │ • Spoken ACK (<1s)     │
-                                      │ • JOB-XXX in ledger    │
-                                      │ • Async AGY Subagent   │
-                                      │ • Completion Chime     │
-                                      └────────────────────────┘
+               ┌────────────────────────────────────────────────────────┐
+               │              Incoming Room Voice Audio                 │
+               └──────────────────────────┬─────────────────────────────┘
+                                          │
+                                          ▼
+               ┌────────────────────────────────────────────────────────┐
+               │         voice_wait.py exits with Code 0                │
+               │         Antigravity Wakes Live Agent In-Session        │
+               └──────────────────────────┬─────────────────────────────┘
+                                          │
+                   ┌──────────────────────┴──────────────────────┐
+                   ▼                                             ▼
+        [Fast-Path Query / Status]                      [Slow-Path Heavy Task]
+                   │                                             │
+                   ▼                                             ▼
+        Formulate spoken answer                         1. Call vocalis_speak:
+                   │                                       "On it Karan, running
+                   ▼                                        Win Janitor now."
+        Call vocalis_speak(text)                                 │
+        & display terminal card                                  ▼
+                   │                                    2. Delegate to specialist:
+                   │                                       invoke_subagent(
+                   │                                         TypeName="win_janitor"
+                   │                                       )
+                   │                                             │
+                   └──────────────────────┬──────────────────────┘
+                                          │
+                                          ▼
+                      ══════════════════════════════════════
+                      🔒 SACRED RE-ARMING IN THE SAME TURN
+                      Launch voice_wait.py immediately!
+                      (WaitMsBeforeAsync=500)
+                      ══════════════════════════════════════
+                                          │
+                                          ▼
+                      Agent stops calling tools to SLEEP
+                      (Mic is listening; Subagents are working)
 ```
 
 ---
@@ -55,25 +71,19 @@ The `/vocalis-nexus` skill provides complete control over Karan's ambient voice 
 From any PowerShell or terminal prompt:
 
 ```powershell
-# 1. Continuous ambient mode (default)
-python -m vocalis --mode loop
+# 1. Test native speech playback (0 tokens)
+python -m vocalis.tools.speak "Hello Karan, Vocalis Nexus is online."
 
-# 2. Single-shot direct mode
-python -m vocalis --mode direct
+# 2. Test single-shot voice listening (0 tokens STT)
+python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/voice_wait.py" --direct
 
-# 3. Skip wake-word for immediate interactive dev testing
-python -m vocalis --mode direct --no-wakeword
+# 3. Ambient wake-word background mode
+python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/voice_wait.py"
 ```
 
 ---
 
-## 🔑 Configuration & Credential Quarantine
-
-Credentials reside strictly in the sovereign external vault:
-* Path: `%USERPROFILE%\.gemini\credentials\vocalis-nexus\config.env`
-* Key: `GEMINI_API_KEY=AIzaSy...`
-
-Runtime variables:
-* `VOCALIS_WAKE_WORD`: Default `hey_jarvis` (pre-trained ONNX)
-* `VOCALIS_VOICE`: `Puck`, `Charon`, `Aoede`, `Fenrir`, or `Kore`
-* `VOCALIS_MODE`: `loop` or `direct`
+## 🔒 Configuration & Directives
+* **Rule Zero**: `GEMINI.md` is never touched or diluted.
+* **Agent Switching**: Use `/agents` $\rightarrow$ `vocalis_nexus` to enter the master vocal session.
+* **Zero Token Waste**: STT uses the free Chromium speech gateway, TTS uses native Windows SpeechSynthesizer.
