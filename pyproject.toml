@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=72.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "vocalis-nexus"
+version = "0.1.0"
+description = "Sovereign ambient voice-to-voice AI assistant & multi-agent dispatcher"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+  {name = "Karan Singh Verma"}
+]
+keywords = ["voice", "assistant", "gemini", "wakeword", "ai-agent"]
+dependencies = [
+  "google-genai>=2.8.0",
+  "sounddevice>=0.5.1",
+  "numpy>=1.26.0",
+  "onnxruntime>=1.17.0",
+  "openwakeword>=0.6.0",
+  "python-dotenv>=1.0.0",
+  "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "flake8>=7.0.0",
+]
+
+[project.scripts]
+vocalis = "vocalis.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vocalis*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

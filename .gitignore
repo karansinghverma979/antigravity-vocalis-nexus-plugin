@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environments
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# Runtime state — never commit
+*.log
+*.jsonl
+*.sqlite
+*.db
+.local/
+
+# Wake word ONNX models (auto-downloaded at runtime)
+vocalis/wakeword/models/*.onnx
+vocalis/wakeword/models/*.tflite
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini

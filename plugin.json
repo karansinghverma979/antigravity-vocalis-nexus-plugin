@@ -1,0 +1,22 @@
+{
+  "name": "vocalis-nexus-plugin",
+  "description": "Sovereign ambient voice-to-voice AI assistant & multi-agent dispatcher for Google Antigravity",
+  "version": "0.1.0",
+  "author": "Karan Singh Verma",
+  "license": "MIT",
+  "homepage": "https://github.com/karansinghverma979/antigravity-vocalis-nexus",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karansinghverma979/antigravity-vocalis-nexus.git"
+  },
+  "keywords": [
+    "antigravity",
+    "voice",
+    "assistant",
+    "gemini-live-api",
+    "wakeword",
+    "hid",
+    "autonomous-agent",
+    "real-time"
+  ]
+}

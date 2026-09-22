@@ -1,0 +1,27 @@
+name: 🐛 Bug Report
+description: Report a defect, acoustic glitch, or regression in Vocalis-Nexus.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for filing a report. Please verify your environment details before submitting.
+  - type: input
+    id: environment
+    attributes:
+      label: OS & Hardware
+      description: Windows 11, Motobook, microphone type, Python version
+      placeholder: Windows 11 24H2 / USB Mic / Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Clear description of what happened vs what was expected.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal Logs
+      description: Paste any tracebacks or terminal errors here.
