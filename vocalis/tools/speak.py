@@ -15,6 +15,7 @@ import ctypes
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # Force UTF-8 on Windows
@@ -106,12 +107,12 @@ def _play_mp3_native(mp3_path: str) -> bool:
 
     try:
         winmm = ctypes.windll.winmm
-        alias = f"voc_{os.getpid()}_{int(tempfile.time.time() * 1000) % 100000}"
+        alias = f"voc_{os.getpid()}_{int(time.time() * 1000) % 100000}"
         winmm.mciSendStringW(f'open "{mp3_path}" type mpegvideo alias {alias}', None, 0, 0)
         winmm.mciSendStringW(f"play {alias} wait", None, 0, 0)
         winmm.mciSendStringW(f"close {alias}", None, 0, 0)
         return True
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -119,7 +120,7 @@ def _speak_gtts(text: str, lang: str, tld: str) -> bool:
     """Synthesize voice using Google Assistant TTS."""
     from gtts import gTTS
 
-    tmp = os.path.join(tempfile.gettempdir(), f"voc_gtts_{os.getpid()}.mp3")
+    tmp = os.path.join(tempfile.gettempdir(), f"voc_gtts_{os.getpid()}_{int(time.time() * 1000) % 10000}.mp3")
     try:
         tts = gTTS(text=text, lang=lang, tld=tld, slow=False)
         tts.save(tmp)
@@ -136,7 +137,7 @@ async def _speak_edge(text: str, voice_name: str) -> bool:
     """Synthesize voice using Microsoft Edge Neural TTS."""
     import edge_tts
 
-    tmp = os.path.join(tempfile.gettempdir(), f"voc_edge_{os.getpid()}.mp3")
+    tmp = os.path.join(tempfile.gettempdir(), f"voc_edge_{os.getpid()}_{int(time.time() * 1000) % 10000}.mp3")
     try:
         comm = edge_tts.Communicate(text, voice_name, volume="+140%")
         await comm.save(tmp)
@@ -162,7 +163,7 @@ def _speak_native_sapi(text: str) -> bool:
     return res.returncode == 0
 
 
-def speak_text(text: str, voice_key: str | None = None) -> bool:
+def speak_text(text: str, voice_key: str | None = None, silent: bool = False) -> bool:
     """
     Main speech entrypoint. Synthesizes and plays audio through Motobook speakers.
     """
@@ -173,15 +174,25 @@ def speak_text(text: str, voice_key: str | None = None) -> bool:
     v_name = (voice_key or get_default_voice()).lower()
     spec = VOICE_MAP.get(v_name, VOICE_MAP["google-in"])
 
+    if not silent:
+        print(f"🎙️ Speaking [{v_name}]: \"{clean_text}\"")
+
     try:
         if spec["type"] == "gtts":
-            return _speak_gtts(clean_text, spec["lang"], spec["tld"])
+            ok = _speak_gtts(clean_text, spec["lang"], spec["tld"])
         elif spec["type"] == "edge_tts":
-            return asyncio.run(_speak_edge(clean_text, spec["voice"]))
+            ok = asyncio.run(_speak_edge(clean_text, spec["voice"]))
         else:
+            ok = _speak_native_sapi(clean_text)
+
+        if not ok and spec["type"] != "native":
+            if not silent:
+                print("⚠️ Falling back to native Windows voice...")
             return _speak_native_sapi(clean_text)
-    except Exception:
-        # Graceful fallback to native Windows voice
+        return ok
+    except Exception as e:
+        if not silent:
+            print(f"⚠️ Voice error: {e}. Falling back to native voice...")
         return _speak_native_sapi(clean_text)
 
 
