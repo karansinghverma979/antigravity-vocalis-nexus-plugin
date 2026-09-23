@@ -46,8 +46,8 @@ def _campaigns() -> dict:
         today = date.today().isoformat()
         with sqlite3.connect(str(db_path)) as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM strikes WHERE date=? AND status='pending'",
-                (today,),
+                "SELECT COUNT(*) FROM strikes WHERE (execution_date=? OR date(created_at)=?) AND status != 'done'",
+                (today, today),
             ).fetchone()
             pending = row[0] if row else 0
         return {"strikes_pending_today": pending}

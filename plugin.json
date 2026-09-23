@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "author": "Karan Singh Verma",
   "license": "MIT",
-  "homepage": "https://github.com/karansinghverma979/antigravity-vocalis-nexus",
+  "homepage": "https://github.com/karansinghverma979/antigravity-vocalis-nexus-plugin",
   "repository": {
     "type": "git",
-    "url": "https://github.com/karansinghverma979/antigravity-vocalis-nexus.git"
+    "url": "https://github.com/karansinghverma979/antigravity-vocalis-nexus-plugin.git"
   },
   "keywords": [
     "antigravity",

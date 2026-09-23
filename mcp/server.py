@@ -126,6 +126,46 @@ TOOLS = [
             "required": ["chime_type"],
         },
     },
+    {
+        "name": "vocalis_poll_inbox",
+        "description": "Fetch and drain pending voice messages captured by the acoustic sentinel daemon.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of messages to fetch (default: 10)",
+                    "default": 10,
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, peek at pending messages without marking them as processed",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "vocalis_send_greeting",
+        "description": "Play wake chime and announce Vocalis-Nexus online through workstation speakers.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Custom greeting to speak aloud (optional)",
+                }
+            },
+        },
+    },
+    {
+        "name": "vocalis_get_summary",
+        "description": "Generate an executive activity briefing summarizing voice traffic, inbox queue, and subagent jobs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 
@@ -218,6 +258,56 @@ def handle_call_tool(name: str, arguments: dict) -> list[dict]:
         return [{
             "type": "text",
             "text": json.dumps({"played": chime_type})
+        }]
+
+    elif name == "vocalis_poll_inbox":
+        from vocalis.inbox import pop_pending_messages, _load_inbox
+        limit = arguments.get("limit", 10)
+        dry_run = arguments.get("dry_run", False)
+        if dry_run:
+            data = _load_inbox()
+            pending = [m for m in data.get("messages", []) if m.get("status") == "pending"][:limit]
+        else:
+            pending = pop_pending_messages()[:limit]
+        return [{
+            "type": "text",
+            "text": json.dumps({
+                "ok": True,
+                "count": len(pending),
+                "messages": pending,
+                "dry_run": dry_run,
+            }, indent=2)
+        }]
+
+    elif name == "vocalis_send_greeting":
+        from vocalis.tools.speak import speak_text
+        custom_text = arguments.get("text", "Vocalis Nexus online. Standing by for voice commands.")
+        play_wake_chime()
+        ok = speak_text(custom_text)
+        return [{
+            "type": "text",
+            "text": json.dumps({"ok": True, "greeting": custom_text, "spoken": ok}, indent=2)
+        }]
+
+    elif name == "vocalis_get_summary":
+        from vocalis.inbox import _load_inbox
+        data = _load_inbox()
+        all_msgs = data.get("messages", [])
+        pending = sum(1 for m in all_msgs if m.get("status") == "pending")
+        processed = sum(1 for m in all_msgs if m.get("status") == "processed")
+        jobs = registry.list_all()
+        active_jobs = sum(1 for j in jobs if j.get("status") in ("QUEUED", "RUNNING"))
+        return [{
+            "type": "text",
+            "text": json.dumps({
+                "ok": True,
+                "total_voice_messages": len(all_msgs),
+                "pending_voice_messages": pending,
+                "processed_voice_messages": processed,
+                "total_jobs": len(jobs),
+                "active_jobs": active_jobs,
+                "recent_messages": all_msgs[-5:] if all_msgs else [],
+            }, indent=2)
         }]
 
     else:

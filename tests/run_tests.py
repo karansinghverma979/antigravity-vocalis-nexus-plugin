@@ -127,6 +127,104 @@ def _():
     assert "vocalis_play_chime" in tools
 
 
+@test("Voice Inbox: Thread-safe queue FIFO & barge-in state")
+def _():
+    with tempfile.TemporaryDirectory() as td:
+        inbox_f = Path(td) / "vocalis_inbox.json"
+        state_f = Path(td) / "vocalis_state.json"
+
+        import vocalis.inbox as ibox
+        import vocalis.tools.speak as spk
+        ibox.INBOX_FILE = inbox_f
+        spk.STATE_FILE = state_f
+
+        assert ibox.has_pending_messages() is False
+        m1 = ibox.enqueue_voice_message("status", "hey nexus status", "nexus")
+        assert m1["id"].startswith("MSG-")
+        assert ibox.has_pending_messages() is True
+
+        pending = ibox.pop_pending_messages()
+        assert len(pending) == 1
+        assert pending[0]["text"] == "status"
+        assert ibox.has_pending_messages() is False
+
+        # Barge-in
+        spk._set_speaking_state(True, "test_barge_alias")
+        assert spk.is_speaking() is True
+        spk.abort_speech()
+        assert spk.is_speaking() is False
+
+
+@test("Desktop Pet UI: Canvas rendering, vector scaling & Click-to-Evoke")
+def _():
+    import queue
+    from vocalis.ui.pet import VocalisPetUI
+    q = queue.Queue()
+    act_q = queue.Queue()
+    pet = VocalisPetUI(event_queue=q, action_queue=act_q)
+
+    # State transitions
+    pet.set_state("LISTENING", "🎙️ listening...")
+    assert pet.state == "LISTENING"
+    pet.set_state("TRANSCRIBING", "⚡ thinking...")
+    assert pet.state == "TRANSCRIBING"
+    pet.set_state("QUEUED", "✓ Queued", "clean RAM")
+    assert pet.state == "QUEUED"
+    pet.set_state("STANDBY", "💤 nexus")
+    assert pet.state == "STANDBY"
+
+    # Vector scaling
+    pet.set_scale(1.5)
+    assert pet.scale == 1.5
+    assert pet.width == int(136 * 1.5)
+    assert pet.height == int(120 * 1.5)
+
+    # Click-to-evoke
+    pet.trigger_evoke()
+    assert pet.state == "LISTENING"
+    act_msg = act_q.get_nowait()
+    assert act_msg.get("cmd") == "MANUAL_TRIGGER"
+
+    pet.root.destroy()
+
+
+@test("Wake Word Sentinel: Energy pre-gating, EMA temporal smoothing & debounce")
+def _():
+    from tests.test_wakeword import (
+        test_calculate_dbfs,
+        test_energy_pre_gate_skips_inference,
+        test_ema_smoothing_and_consecutive_verification,
+        test_refractory_debounce_lockout,
+    )
+    test_calculate_dbfs()
+    test_energy_pre_gate_skips_inference()
+    test_ema_smoothing_and_consecutive_verification()
+    test_refractory_debounce_lockout()
+
+
+@test("Speech Synthesis: Phonetic sanitization & --text flag")
+def _():
+    from vocalis.tools.speak import clean_phonetics
+    raw = "**Hello** `world` [click](https://example.com) # Title - Item 1 🎙️"
+    cleaned = clean_phonetics(raw)
+    assert "**" not in cleaned
+    assert "`" not in cleaned
+    assert "https://" not in cleaned
+    assert "#" not in cleaned
+    assert "Item 1" in cleaned
+    assert "Hello world" in cleaned
+
+
+@test("Lifecycle Controller: Listener telemetry & status query")
+def _():
+    import scripts.listener as listener_mod
+    status = listener_mod.get_status()
+    assert isinstance(status, dict)
+    assert "daemon_running" in status
+    assert "trigger_running" in status
+    assert "pending_count" in status
+
+
 print(f"\nResults: {passed} passed, {failed} failed.")
 if failed > 0:
     sys.exit(1)

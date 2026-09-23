@@ -3,66 +3,96 @@ name: vocalis-nexus
 description: Sovereign ambient voice-to-voice AI assistant, local wake-word sentinel, and multi-agent dispatcher for Google Antigravity.
 ---
 
-# 🎙️ Vocalis-Nexus Skill
+# 🎙️ Vocalis-Nexus: Sovereign Ambient Voice AI Gateway
 
-The `/vocalis-nexus` skill provides complete control over Karan's ambient voice assistant, background task delegation, and acoustic notifications on Motobook workstation.
+Use this skill whenever Karan invokes `/vocalis-nexus`, `/vocalis`, `/voice`, or needs to manage ambient microphone listening, spoken responses, asynchronous task delegation, or audio telemetry on Motobook workstation.
 
----
-
-## ⚡ Quick Invocations
-
-| Command | Action |
-| :--- | :--- |
-| **`/vocalis-nexus start`** | Launch the continuous ambient sentinel loop (`voice_wait.py` in background). |
-| **`/vocalis-nexus pull`** *(or `direct`)* | Single-shot push-to-talk: listen immediately $\rightarrow$ voice answer $\rightarrow$ disarm (0 bg processes). |
-| **`/vocalis-nexus speak <text>`** | Speak a message aloud through laptop speakers using native Windows TTS (0 tokens). |
-| **`/vocalis-nexus stop`** | Cleanly terminate the background voice listener trigger. |
-| **`/vocalis-nexus status`** | Check daemon health, microphone state, and recent voice jobs. |
-| **`/vocalis-nexus chime [wake|completion|error]`** | Test audio speaker output and notification chords. |
+> **Single Source of Truth**: This skill is the authoritative operating governor for `antigravity-vocalis-nexus-plugin`. It enforces 100% architectural and operational parity with Telegram Nexus, ensuring hands-free, acoustic Command & Control (C2) with zero cloud token waste.
 
 ---
 
-## 🏛️ System Architecture: 100% Telegram-Nexus Parity
+## 🏛️ Operating Philosophy & Core Directives
 
-```text
-               ┌────────────────────────────────────────────────────────┐
-               │              Incoming Room Voice Audio                 │
-               └──────────────────────────┬─────────────────────────────┘
-                                          │
-                                          ▼
-               ┌────────────────────────────────────────────────────────┐
-               │         voice_wait.py exits with Code 0                │
-               │         Antigravity Wakes Live Agent In-Session        │
-               └──────────────────────────┬─────────────────────────────┘
-                                          │
-                   ┌──────────────────────┴──────────────────────┐
-                   ▼                                             ▼
-        [Fast-Path Query / Status]                      [Slow-Path Heavy Task]
-                   │                                             │
-                   ▼                                             ▼
-        Formulate spoken answer                         1. Call vocalis_speak:
-                   │                                       "On it Karan, running
-                   ▼                                        Win Janitor now."
-        Call vocalis_speak(text)                                 │
-        & display terminal card                                  ▼
-                   │                                    2. Delegate to specialist:
-                   │                                       invoke_subagent(
-                   │                                         TypeName="win_janitor"
-                   │                                       )
-                   │                                             │
-                   └──────────────────────┬──────────────────────┘
-                                          │
-                                          ▼
-                      ══════════════════════════════════════
-                      🔒 SACRED RE-ARMING IN THE SAME TURN
-                      Launch voice_wait.py immediately!
-                      (WaitMsBeforeAsync=500)
-                      ══════════════════════════════════════
-                                          │
-                                          ▼
-                      Agent stops calling tools to SLEEP
-                      (Mic is listening; Subagents are working)
-```
+### 1. 🛡️ Strict Sovereign Owner Invariant (Personal Workstation C2)
+* **100% Local Processing & Privacy**:
+  - Speech detection and energy gating are executed locally on Motobook workstation via numpy + sounddevice.
+  - Wake words (*"Hey Nexus"*, *"Jarvis"*, *"Antigravity"*) trip the local sentinel. Casual room chatter with friends or family is dropped silently.
+  - Transcribed voice commands are appended to `~/.gemini/logs/vocalis_inbox.json` with zero public exposure.
+
+### 2. ⚡ Dual-Gear Architecture: Automated Loop vs. Instant Pull
+Vocalis Nexus provides two dedicated operational gears engineered to keep the background listener completely separated from manual one-shot requests:
+
+* **🛰️ Gear 1: Ambient Sentinel (Automated Reactive Loop)**:
+  - Invoked via: `/vocalis-nexus start`
+  - Background listener daemon runs silently: `python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/listener.py" --start`
+  - Reactive trigger holds inbox: `python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/voice_wait.py"`
+  - **The Sacred Re-Arming Invariant**: In this mode, the agent *must* re-arm `voice_wait.py` at the end of every active turn.
+  - **The Voice Output Mandate**: Every response is spoken aloud through Motobook speakers via `python -m vocalis.tools.speak --text "<spoken_sentence>"`.
+  - Hands-free, autonomous acoustic C2 across the room.
+
+* **⚡ Gear 2: Instant Pull / Direct Mode (One-Shot Manual Intake)**:
+  - Invoked via: `/vocalis-nexus pull` or `/vocalis-nexus direct` (CLI: `python listener.py --pull`)
+  - **100% Behavioral & Action Parity**: The agent performs the **exact same actions** as the standard Vocalis Dispatcher:
+    - Same task running and reasoning workflows.
+    - Same spoken speech synthesis out loud through laptop speakers.
+    - Same clean ASCII telemetry card output in terminal chat.
+    - Same audit logging to `~/.gemini/logs/vocalis_daemon.log`.
+  - **The One and Only Difference**: Gear 2 performs a **one-time poll/check** and **NEVER launches or re-arms `voice_wait.py`**.
+  - **Zero Arguments Required**: Automatically fetches pending voice messages from `vocalis_inbox.json`.
+  - Terminates cleanly in the active turn with **zero background processes**.
+
+* **Master Dispatcher Swarm Triage (Gear 1)**:
+  - For fast queries: Formulate spoken reply (1-2 sentences), speak aloud (<1s), and display terminal card.
+  - For heavy tasks (coding, OS sweeps, research, git tasks):
+    1. Speak immediate verbal ACK aloud: *"Understood Karan, starting that task with the specialist team now."*
+    2. Create job ticket via `vocalis_create_job` (e.g. `JOB-XX`).
+    3. **Delegate to Subagent Swarm (Zero Heavy Self-Work)**: Call `invoke_subagent` to deploy specialist agents (`win_janitor`, `campaigns`, `repo_architect`, `google_workspace`, `play_console`, `research`, or `self` worker).
+* **The Sacred Re-Arming Invariant (MANDATORY IN THE SAME TURN)**:
+  - At the end of every turn, after speaking replies or queuing jobs:
+    **Always re-arm `voice_wait.py` via `run_command(WaitMsBeforeAsync=500)` in that very same turn!**
+  - Never wait for background workers to finish before re-arming the listener!
+  - If another voice command comes in while a worker is crunching, the agent immediately wakes up, handles the new command, speaks back, re-arms, and sleeps!
+
+---
+
+## 🗣️ The Spoken Answer Framing Standard
+
+All speech synthesis generated by Vocalis-Nexus adheres to strict acoustic formatting:
+
+1. **1 to 2 Sentences Maximum**: Conversational, concise, auditory-first (under 30 words).
+2. **Pure Phonetics & Zero Markup**:
+   - Never include markdown asterisks (`**bold**`), headers (`#`), bullet dashes (`-`), code backticks, or raw URLs in speech strings.
+   - Expand symbols naturally: write *"72 percent"* instead of *"72%"*; write *"4 gigabytes"* instead of *"4GB"*.
+3. **Dual Delivery (Ears + Eyes)**:
+   - Spoken summary dispatched to laptop speakers via `vocalis.tools.speak`.
+   - Comprehensive technical cards and tables rendered in terminal chat.
+
+---
+
+## ⏱️ The 4-Minute Watchdog & Progress Sentinel
+* If any background job (`JOB-XX`) takes **more than 4 minutes (240s)**:
+  - `voice_wait.py` detects elapsed time and automatically wakes up the agent.
+  - The agent announces verbal progress update: *"Job [JOB-XX] is still crunching on Motobook workstation. Will notify you immediately upon completion."*
+  - Re-arm `voice_wait.py` immediately.
+
+---
+
+## 🎮 Command Workflows & Shorthand Suite
+
+### 1. Terminal Governance Commands (Motobook Workstation)
+
+| Command / Shorthand | Target Action | Underlying Mechanism |
+| :--- | :--- | :--- |
+| **`/vocalis-nexus start`** | Boots sentinel daemon & arms live reactive in-session agent loop | Launches `vocalis_daemon.py` + `voice_wait.py` (Re-Arming) |
+| **`/vocalis-nexus stop`** | Halts daemon sentinel and trigger cleanly, releasing microphone | `python scripts/listener.py --stop` |
+| **`/vocalis-nexus status`** | Displays live sentinel health, daemon PID, inbox queue, and active jobs | `python scripts/listener.py --status` |
+| **`/vocalis-nexus pull`** | One-shot manual check of Voice Inbox (0 background tasks) | `python scripts/listener.py --pull` or `vocalis_poll_inbox` |
+| **`/vocalis-nexus direct`** | Single-shot direct voice prompt recording without wake word | `python scripts/voice_wait.py --direct` |
+| **`/vocalis-nexus speak <text>`** | Speaks text aloud through laptop speakers using native audio engine | `python -m vocalis.tools.speak --text "<text>"` |
+| **`/vocalis-nexus summary`** | Render executive activity briefing card of voice traffic & jobs | `vocalis_get_summary` |
+| **`/vocalis-nexus jobs`** | List all active and recent `JOB-XX` voice tickets | `vocalis_list_jobs` |
+| **`/vocalis-nexus test`** | Verifies wake chimes, audio synthesis, and speaker playback | `python scripts/listener.py --test` |
+| **`/vocalis-nexus voice [name]`**| Views or changes active default voice (`google-in`, `madhur`, etc.) | `python -m vocalis.tools.speak --set-default <name>` |
 
 ---
 
@@ -71,19 +101,22 @@ The `/vocalis-nexus` skill provides complete control over Karan's ambient voice 
 From any PowerShell or terminal prompt:
 
 ```powershell
-# 1. Test native speech playback (0 tokens)
-python -m vocalis.tools.speak "Hello Karan, Vocalis Nexus is online."
+# 1. Lifecycle management
+python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/listener.py" --status
+python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/listener.py" --start
+python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/listener.py" --stop
 
-# 2. Test single-shot voice listening (0 tokens STT)
+# 2. Test native speech playback (0 tokens)
+python -m vocalis.tools.speak --text "Hello Karan, Vocalis Nexus is online."
+
+# 3. Test single-shot voice listening (0 tokens STT)
 python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/voice_wait.py" --direct
-
-# 3. Ambient wake-word background mode
-python "$HOME/.gemini/config/plugins/vocalis-nexus-plugin/scripts/voice_wait.py"
 ```
 
 ---
 
-## 🔒 Configuration & Directives
+## 🔒 Configuration & Invariants
 * **Rule Zero**: `GEMINI.md` is never touched or diluted.
 * **Agent Switching**: Use `/agents` $\rightarrow$ `vocalis_nexus` to enter the master vocal session.
-* **Zero Token Waste**: STT uses the free Chromium speech gateway, TTS uses native Windows SpeechSynthesizer.
+* **Zero Token Waste**: STT uses the free Chromium speech gateway, TTS uses native Windows / Edge neural voice synthesis.
+* **The Voice Output Mandate**: Every handled message must speak a concise answer aloud through the speakers.

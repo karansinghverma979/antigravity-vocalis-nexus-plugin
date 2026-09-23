@@ -23,6 +23,11 @@ dependencies = [
   "rich>=13.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/karansinghverma979/antigravity-vocalis-nexus-plugin"
+Repository = "https://github.com/karansinghverma979/antigravity-vocalis-nexus-plugin.git"
+Issues = "https://github.com/karansinghverma979/antigravity-vocalis-nexus-plugin/issues"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",

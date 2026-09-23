@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Vocalis-Nexus Reactive Voice Trigger for Google Antigravity.
+Vocalis-Nexus Reactive Event Trigger for Google Antigravity.
+(100% Behavioral Parity with Telegram-Nexus poll_wait.py)
 
-Holds the microphone listener silently in the background.
+Holds silently in the background waiting on the persistent Voice Inbox (~/.gemini/logs/vocalis_inbox.json).
 Exits IMMEDIATELY with code 0 when:
-1. Speech is detected and transcribed via the zero-token Chromium STT endpoint.
-2. An explicit stop signal (vocalis_stop.flag) is detected.
+1. One or more voice commands are present in the Voice Inbox.
+2. A direct single-shot voice prompt is recorded (--direct flag).
+3. An explicit stop signal (vocalis_stop.flag) is detected.
 
 When this script exits with code 0, Antigravity CLI's reactive engine automatically
 wakes up the live vocalis_nexus agent in the terminal window with full context intact!
@@ -29,85 +31,108 @@ if hasattr(sys.stderr, "reconfigure"):
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from vocalis.tools.notifications import play_wake_chime, play_error_chime
+from vocalis.inbox import pop_pending_messages, has_pending_messages, enqueue_voice_message
+from vocalis.tools.notifications import play_wake_chime
 
 LOG_DIR = Path(os.path.expanduser("~/.gemini/logs"))
 PID_FILE = LOG_DIR / "vocalis_trigger.pid"
 STOP_FILE = LOG_DIR / "vocalis_stop.flag"
+JOB_REGISTRY_PATH = LOG_DIR / "vocalis_jobs.json"
 
 
-def listen_for_speech(require_wake_word: bool = True, timeout_s: float = 30.0) -> dict | None:
-    """
-    Listen to the microphone and transcribe speech using the zero-token browser endpoint.
-    """
+def direct_capture_and_exit():
+    """Single-shot direct mode: record 1 phrase immediately without wake word, then exit."""
+    import collections
+    import numpy as np
+    import sounddevice as sd
     import speech_recognition as sr
 
     r = sr.Recognizer()
-    r.dynamic_energy_threshold = True
-    r.pause_threshold = 0.8  # Stop recording after 0.8s of silence
+    sample_rate = 16000
+    block_size = 1024
+    silence_blocks_threshold = int(0.7 * sample_rate / block_size)
+    max_phrase_blocks = int(12.0 * sample_rate / block_size)
+
+    ambient_history = collections.deque(maxlen=40)
+    pre_speech_buffer = collections.deque(maxlen=int(0.35 * sample_rate / block_size))
 
     try:
-        with sr.Microphone(sample_rate=16000) as source:
-            # Quick 0.3s ambient noise calibration
-            r.adjust_for_ambient_noise(source, duration=0.3)
+        play_wake_chime()
+        with sd.InputStream(samplerate=sample_rate, channels=1, dtype="int16", blocksize=block_size) as stream:
+            # Quick 0.3s noise calibration
+            for _ in range(int(0.3 * sample_rate / block_size)):
+                data, _ = stream.read(block_size)
+                samples = data[:, 0].astype(np.float32)
+                ambient_history.append(float(np.sqrt(np.mean(samples ** 2))))
 
-            # Listen for speech phrase
-            audio = r.listen(source, timeout=timeout_s, phrase_time_limit=15.0)
+            is_recording = False
+            speech_buffer = []
+            silence_counter = 0
+            timeout_epoch = time.time() + 7.0
 
-            # Transcribe via Chromium speech endpoint (0 tokens, 0 API keys)
-            raw_text = r.recognize_google(audio, language="en-IN")
-            if not raw_text or not raw_text.strip():
-                return None
+            while True:
+                if not is_recording and time.time() > timeout_epoch:
+                    raise TimeoutError("No speech detected within timeout.")
 
-            clean = raw_text.strip()
-            lower = clean.lower()
+                data, _ = stream.read(block_size)
+                samples = data[:, 0].astype(np.float32)
+                rms = float(np.sqrt(np.mean(samples ** 2)))
 
-            # Wake word filtering if required
-            wake_words = ["nexus", "jarvis", "hey nexus", "hey jarvis", "ok nexus", "alexa"]
-            matched_wake = None
+                if not is_recording:
+                    ambient_history.append(rms)
+                    ambient_floor = sum(ambient_history) / max(1, len(ambient_history))
+                    threshold = max(25.0, ambient_floor * 3.2)
+                    pre_speech_buffer.append(data.tobytes())
 
-            if require_wake_word:
-                for w in wake_words:
-                    if w in lower:
-                        matched_wake = w
+                    if rms > threshold:
+                        is_recording = True
+                        speech_buffer = list(pre_speech_buffer)
+                        speech_buffer.append(data.tobytes())
+                        silence_counter = 0
+                else:
+                    speech_buffer.append(data.tobytes())
+                    ambient_floor = sum(ambient_history) / max(1, len(ambient_history))
+                    threshold = max(25.0, ambient_floor * 3.2)
+
+                    if rms < threshold:
+                        silence_counter += 1
+                    else:
+                        silence_counter = 0
+
+                    if silence_counter >= silence_blocks_threshold or len(speech_buffer) >= max_phrase_blocks:
                         break
-                if not matched_wake:
-                    # Speech was spoken, but wake word was not present; ignore
-                    return None
 
-                # Extract command after wake word
-                idx = lower.find(matched_wake) + len(matched_wake)
-                command = clean[idx:].strip(" ,.?!")
-                if not command:
-                    command = "status"  # default if user just said "Hey Nexus"
-            else:
-                command = clean
+            raw_pcm = b"".join(speech_buffer)
+            audio_data = sr.AudioData(raw_pcm, sample_rate, 2)
+            text = r.recognize_google(audio_data, language="en-IN").strip()
 
-            # Play wake chime confirmation
-            play_wake_chime()
-
-            return {
-                "event": "VOICE_INPUT",
-                "text": command,
-                "raw_transcript": clean,
-                "wake_word_detected": matched_wake or "direct",
+            msg = {
+                "id": "MSG-DIRECT",
+                "text": text,
+                "raw_transcript": text,
+                "wake_word": "direct",
                 "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             }
-
-    except sr.WaitTimeoutError:
-        return None
-    except sr.UnknownValueError:
-        return None
+            print(json.dumps({
+                "event": "VOICE_INPUT",
+                "messages": [msg],
+                "count": 1,
+            }, ensure_ascii=False), flush=True)
+            sys.exit(0)
     except Exception as e:
-        return None
+        print(json.dumps({
+            "event": "DIRECT_TIMEOUT",
+            "message": str(e),
+        }, ensure_ascii=False), flush=True)
+        sys.exit(0)
 
 
-def run_trigger(direct_mode: bool = False):
+def run_trigger():
     # Clear any stale stop flag
     if STOP_FILE.exists():
         STOP_FILE.unlink(missing_ok=True)
 
-    # Acquire PID lock to avoid duplicate mic listeners
+    # Acquire PID lock to avoid duplicate trigger scripts
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     if PID_FILE.exists():
         try:
@@ -117,7 +142,7 @@ def run_trigger(direct_mode: bool = False):
             if existing_pid != os.getpid() and psutil.pid_exists(existing_pid):
                 proc = psutil.Process(existing_pid)
                 if "python" in proc.name().lower():
-                    # Another instance is already actively holding the mic
+                    # Another trigger instance is already holding the inbox socket
                     print(json.dumps({"event": "ALREADY_LISTENING", "pid": existing_pid}, ensure_ascii=False), flush=True)
                     sys.exit(0)
         except Exception:
@@ -134,28 +159,47 @@ def run_trigger(direct_mode: bool = False):
                 print(json.dumps({"event": "STOP_REQUESTED"}, ensure_ascii=False), flush=True)
                 sys.exit(0)
 
-            # 2. Listen for speech
-            # In direct mode: do not require wake word (listen immediately)
-            # In loop mode: require "nexus" or "jarvis"
-            require_wake = not direct_mode
-            result = listen_for_speech(require_wake_word=require_wake, timeout_s=5.0)
+            # 2. Check for active background jobs reaching the 4-minute threshold
+            if JOB_REGISTRY_PATH.exists():
+                try:
+                    with open(JOB_REGISTRY_PATH, "r", encoding="utf-8") as f:
+                        jobs = json.load(f)
+                    now_epoch = time.time()
+                    for j_id, j_data in jobs.items():
+                        if j_data.get("status") in ("in_progress", "RUNNING") and not j_data.get("heartbeat_4m_sent"):
+                            created_epoch = j_data.get("created_at_epoch")
+                            if created_epoch and (now_epoch - created_epoch) >= 240:
+                                j_data["heartbeat_4m_sent"] = True
+                                with open(JOB_REGISTRY_PATH, "w", encoding="utf-8") as f_out:
+                                    json.dump(jobs, f_out, indent=2, ensure_ascii=False)
+                                payload = {
+                                    "event": "JOB_HEARTBEAT_4M",
+                                    "job_id": j_id,
+                                    "task": j_data.get("task") or j_data.get("title", ""),
+                                    "elapsed_seconds": int(now_epoch - created_epoch),
+                                }
+                                print(json.dumps(payload, ensure_ascii=False), flush=True)
+                                sys.exit(0)
+                except Exception:
+                    pass
 
-            if result:
-                # Speech captured and transcribed!
-                # Output JSON payload and exit Code 0 -> wakes up Antigravity agent!
-                print(json.dumps(result, ensure_ascii=False), flush=True)
-                sys.exit(0)
+            # 3. Check the persistent voice inbox
+            if has_pending_messages():
+                pending = pop_pending_messages()
+                if pending:
+                    # Output structured payload and exit 0 -> wakes up Antigravity agent!
+                    payload = {
+                        "event": "VOICE_INPUT",
+                        "messages": pending,
+                        "count": len(pending),
+                    }
+                    print(json.dumps(payload, ensure_ascii=False), flush=True)
+                    sys.exit(0)
 
-            if direct_mode:
-                # In direct mode, exit if no speech within timeout
-                print(json.dumps({"event": "DIRECT_TIMEOUT", "message": "No speech detected."}, ensure_ascii=False), flush=True)
-                sys.exit(0)
-
-            # Tiny sleep to avoid spinning CPU
+            # Hold silently, poll every 100ms
             time.sleep(0.1)
 
     finally:
-        # Release PID lock on exit
         if PID_FILE.exists():
             try:
                 with open(PID_FILE, "r", encoding="utf-8") as f:
@@ -166,11 +210,14 @@ def run_trigger(direct_mode: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Vocalis-Nexus Reactive Voice Trigger")
-    parser.add_argument("--direct", action="store_true", help="Single-shot direct mode: listen immediately without wake word")
+    parser = argparse.ArgumentParser(description="Vocalis-Nexus Reactive Event Trigger")
+    parser.add_argument("--direct", action="store_true", help="Single-shot direct mode: listen immediately without waiting for daemon")
     args = parser.parse_args()
 
-    run_trigger(direct_mode=args.direct)
+    if args.direct:
+        direct_capture_and_exit()
+    else:
+        run_trigger()
 
 
 if __name__ == "__main__":

@@ -59,9 +59,16 @@ class Config:
     # Audio constants
     SAMPLE_RATE: int = 16_000          # Mic input (Gemini Live API requirement)
     OUTPUT_SAMPLE_RATE: int = 24_000   # Speaker output (Gemini Live API output)
-    CHUNK_FRAMES: int = 512            # ~32ms per chunk at 16kHz
+    CHUNK_FRAMES: int = 512            # ~32ms per chunk at 16kHz for live streaming
     VAD_THRESHOLD: float = 0.65        # Silero VAD speech probability gate
-    WAKE_SCORE_THRESHOLD: float = 0.50 # openWakeWord confidence gate
+    WAKE_SCORE_THRESHOLD: float = float(os.environ.get("VOCALIS_WAKE_THRESHOLD", "0.50"))
+
+    # Wake word sentinel parameters
+    WAKE_CHUNK_FRAMES: int = 1280      # 80ms at 16kHz (optimal for openWakeWord)
+    WAKE_ENERGY_THRESHOLD_DB: float = float(os.environ.get("VOCALIS_WAKE_ENERGY_DB", "-45.0"))
+    WAKE_EMA_ALPHA: float = 0.55       # Exponential Moving Average weight for score smoothing
+    WAKE_CONSECUTIVE_FRAMES: int = 2   # Consecutive hits required before triggering
+    WAKE_DEBOUNCE_S: float = 1.5       # Refractory period after wake to prevent duplicate triggers
 
     # Session lifecycle
     SILENCE_TIMEOUT_S: float = 15.0    # Auto-close Loop session on N seconds silence
