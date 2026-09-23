@@ -86,6 +86,8 @@ class VocalisPetUI:
         pos_x = pref_x if pref_x is not None else 24
         pos_y = pref_y if pref_y is not None else max(40, screen_h - self.height - 70)
         self.root.geometry(f"{self.width}x{self.height}+{pos_x}+{pos_y}")
+        self.root.lift()
+        self.root.focus_force()
 
         # Canvas
         self.canvas = tk.Canvas(
@@ -103,6 +105,8 @@ class VocalisPetUI:
         self.status_text = "💤 nexus"
         self.command_preview = ""
         self.anim_tick = 0
+        self.last_rms: float = 0.0  # live microphone RMS from audio worker
+
 
         # Mouse interaction (Drag vs Click-to-Evoke)
         self._drag_start_x = 0
@@ -180,18 +184,30 @@ class VocalisPetUI:
                 self.height = int(round(self.BASE_HEIGHT * self.scale))
                 px = data.get("pos_x")
                 py = data.get("pos_y")
-                return (int(px) if px is not None else None, int(py) if py is not None else None)
+                if px is not None and py is not None:
+                    px, py = int(px), int(py)
+                    sw = self.root.winfo_screenwidth()
+                    sh = self.root.winfo_screenheight()
+                    max_x = max(10, sw - self.width - 10)
+                    max_y = max(20, sh - self.height - 60)
+                    px = max(10, min(max_x, px))
+                    py = max(20, min(max_y, py))
+                    return (px, py)
         except Exception:
             pass
         return None, None
 
     def _save_preferences(self) -> None:
         try:
+            wx = self.root.winfo_x()
+            wy = self.root.winfo_y()
+            if wx <= 0 and wy <= 0:
+                return
             PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "scale": self.scale,
-                "pos_x": self.root.winfo_x(),
-                "pos_y": self.root.winfo_y(),
+                "pos_x": wx,
+                "pos_y": wy,
                 "updated_at": time.time(),
             }
             PREFS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -222,9 +238,11 @@ class VocalisPetUI:
         if self._dragged:
             self._save_preferences()
         else:
-            # Check if clicked on close icon (top-right corner)
-            close_zone = self.S(20)
-            if event.x >= self.width - close_zone and event.y <= close_zone:
+            # Check if clicked on close icon (top-right corner: center at self.width - S(12), S(12))
+            close_cx = self.width - self.S(12)
+            close_cy = self.S(12)
+            hit_radius = self.S(8)
+            if abs(event.x - close_cx) <= hit_radius and abs(event.y - close_cy) <= hit_radius:
                 self._quit()
             else:
                 # Instant Click-to-Evoke!
@@ -319,7 +337,10 @@ class VocalisPetUI:
                     action = msg.get("state")
                     txt = msg.get("text", "")
                     cmd = msg.get("command", "")
-                    if action:
+                    if action == "RMS":
+                        # Live microphone RMS — update bar level, don't change visual state
+                        self.last_rms = float(msg.get("level", 0.0))
+                    elif action:
                         self.set_state(action, txt, cmd)
                 elif msg == "QUIT":
                     self._quit()
@@ -328,6 +349,7 @@ class VocalisPetUI:
             pass
         finally:
             self.root.after(40, self._poll_queue)
+
 
     # -------------------------------------------------------------
     # Scale-Aware Vector Canvas Rendering Engine
@@ -494,12 +516,16 @@ class VocalisPetUI:
                 fill="#ffffff", outline="",
             )
 
-            # Dancing Audio Visualizer Bars under mouth
+            # Voice-Reactive Audio Visualizer Bars — driven by live microphone RMS
             bar_cx = cx
             bar_y = cat_cy + S(18)
+            # Normalize RMS to 0–1 range (typical speech RMS ~100-1000)
+            rms_norm = min(1.0, self.last_rms / 900.0)
             for i in range(5):
                 bx = bar_cx - S(16) + i * S(8)
-                bh = Sf(3.0) + abs(math.sin((t * 0.35) + i * 1.1)) * Sf(9.0)
+                # Each bar: base height + real voice energy + slight sine phase offset for variety
+                phase_mod = 0.6 + 0.4 * abs(math.sin((t * 0.15) + i * 0.9))
+                bh = Sf(2.0) + (Sf(2.0) + rms_norm * Sf(10.0)) * phase_mod
                 bw = max(1, S(2))
                 self.canvas.create_rectangle(
                     bx - bw, bar_y - bh / 2, bx + bw, bar_y + bh / 2,

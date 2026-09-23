@@ -166,6 +166,29 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "vocalis_ask_user",
+        "description": (
+            "Speak a question or clarification request aloud, then open Karan's microphone and wait for his voice reply. "
+            "Use this whenever you need confirmation, permission, or a missing piece of information from Karan. "
+            "The mic opens automatically — no wake word required. Returns the transcribed spoken answer."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The exact sentence to speak aloud before opening the microphone.",
+                },
+                "timeout_s": {
+                    "type": "number",
+                    "description": "Max seconds to wait for Karan's voice reply (default: 30).",
+                    "default": 30,
+                },
+            },
+            "required": ["question"],
+        },
+    },
 ]
 
 
@@ -307,6 +330,23 @@ def handle_call_tool(name: str, arguments: dict) -> list[dict]:
                 "total_jobs": len(jobs),
                 "active_jobs": active_jobs,
                 "recent_messages": all_msgs[-5:] if all_msgs else [],
+            }, indent=2)
+        }]
+
+    elif name == "vocalis_ask_user":
+        from vocalis.tools.ask_user import ask_user
+        question = arguments.get("question", "")
+        timeout_s = float(arguments.get("timeout_s", 30.0))
+        if not question:
+            return [{"type": "text", "text": json.dumps({"error": "question is required"})}]
+        answer = ask_user(question, timeout_s=timeout_s)
+        return [{
+            "type": "text",
+            "text": json.dumps({
+                "ok": True,
+                "question": question,
+                "answer": answer,
+                "timed_out": answer == "",
             }, indent=2)
         }]
 

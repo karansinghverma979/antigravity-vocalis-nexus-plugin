@@ -111,7 +111,17 @@ python scripts/listener.py --stop     # Cleanly halt daemon & reactive trigger
 python scripts/listener.py --test     # Test chimes & speech synthesis engine
 ```
 
-### 3. Antigravity Slash Commands
+### 3. Direct CLI Daemon & Desktop Pet (`scripts/vocalis_daemon.py`)
+
+Run the sentinel daemon interactively with live terminal output and full Ctrl+C support:
+
+```powershell
+python scripts/vocalis_daemon.py          # Interactive Desktop Pet HUD & acoustic listener
+python scripts/vocalis_daemon.py --no-ui  # Headless mode without desktop pet widget
+python scripts/vocalis_daemon.py --monitor# Console mode with real-time acoustic VU meter
+```
+
+### 4. Antigravity Slash Commands
 
 Within your active Antigravity session, interact directly with the agent:
 

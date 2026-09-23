@@ -31,10 +31,12 @@ import datetime
 import math
 import os
 import queue
+import re
 import sys
 import threading
 import time
 from pathlib import Path
+
 
 # Force UTF-8 on Windows
 if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
@@ -75,15 +77,17 @@ def log(msg: str) -> None:
 
 def normalize_pcm(pcm_bytes: bytes) -> bytes:
     """
-    Standardize speech volume to ~80% full scale (peak ~26000) using dynamic RMS gain.
-    Significantly enhances Google Speech Recognition accuracy for low-gain laptop microphones.
+    Standardize speech volume to ~80% full scale using 99th-percentile gain.
+    99th-percentile instead of single-sample peak prevents breath pops / clicks
+    from muting quiet speech by ignoring transient outlier spikes.
     """
     try:
         import numpy as np
         samples = np.frombuffer(pcm_bytes, dtype=np.int16)
         if len(samples) == 0:
             return pcm_bytes
-        peak = float(np.max(np.abs(samples)))
+        # 99th-percentile peak — outlier-robust against breath pops & mic thumps
+        peak = float(np.percentile(np.abs(samples), 99))
         if 400.0 < peak < 25000.0:
             scale = 26000.0 / peak
             scaled = np.clip(samples.astype(np.float32) * scale, -32767.0, 32767.0).astype(np.int16)
@@ -93,7 +97,45 @@ def normalize_pcm(pcm_bytes: bytes) -> bytes:
     return pcm_bytes
 
 
+def _apply_phonetic_corrections(text: str) -> str:
+    """
+    Post-process STT output to fix common Indian-English phonetic mishearings.
+    Applied after all STT passes to clean up before wake-word matching.
+    """
+    # word-boundary aware substitutions (case-insensitive)
+    PHONETIC_FIXES = {
+        # Wake-word variants
+        r"\bnexas\b": "nexus",
+        r"\bnexis\b": "nexus",
+        r"\bnexa\b": "nexus",
+        r"\bnext us\b": "nexus",
+        r"\bnikos\b": "nexus",
+        r"\bnecas\b": "nexus",
+        r"\btexas\b": "nexus",
+        # App name fixes
+        r"\bage browser\b": "edge browser",
+        r"\baged browser\b": "edge browser",
+        r"\bwhats up\b": "whatsapp",
+        r"\bwhat's up\b": "whatsapp",
+        r"\bwhat's app\b": "whatsapp",
+        r"\boutlook express\b": "outlook",
+        r"\bvs code\b": "vscode",
+        r"\bvis code\b": "vscode",
+        r"\byou tube\b": "youtube",
+        # Common command fix-ups
+        r"\bopen the\b": "open",
+        r"\bclose the\b": "close",
+        r"\bplay the\b": "play",
+        r"\bpaws\b": "pause",
+    }
+    result = text
+    for pattern, replacement in PHONETIC_FIXES.items():
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    return result
+
+
 def transcribe_audio(r, audio_data) -> str:
+
     """
     Bilingual multi-pass STT engine with network retry resilience.
     1st pass: en-IN (Indian English)
@@ -106,7 +148,7 @@ def transcribe_audio(r, audio_data) -> str:
     try:
         res = r.recognize_google(audio_data, language="en-IN").strip()
         if res:
-            return res
+            return _apply_phonetic_corrections(res)
     except (sr.UnknownValueError, sr.WaitTimeoutError):
         pass
     except Exception as e:
@@ -116,7 +158,7 @@ def transcribe_audio(r, audio_data) -> str:
             time.sleep(0.3)
             res = r.recognize_google(audio_data, language="en-IN").strip()
             if res:
-                return res
+                return _apply_phonetic_corrections(res)
         except Exception:
             pass
 
@@ -124,7 +166,7 @@ def transcribe_audio(r, audio_data) -> str:
     try:
         res = r.recognize_google(audio_data, language="hi-IN").strip()
         if res:
-            return res
+            return _apply_phonetic_corrections(res)
     except Exception:
         pass
 
@@ -132,7 +174,7 @@ def transcribe_audio(r, audio_data) -> str:
     try:
         res = r.recognize_google(audio_data, language="en-US").strip()
         if res:
-            return res
+            return _apply_phonetic_corrections(res)
     except Exception:
         pass
 
@@ -147,14 +189,14 @@ def capture_command_phrase(
     ui_q: queue.Queue,
     stop_event: threading.Event,
     initial_timeout_s: float = 6.0,
-    silence_wait_s: float = 5.0,
+    silence_wait_s: float = 2.0,
     max_phrase_s: float = 90.0,
     threshold_fn=None,
     display_wake: str = "nexus",
 ) -> tuple[str, str]:
     """
     Robust long-prompt audio capture loop.
-    Enforces Karan's explicit mandate: wait a full 5.0 seconds of silence before transcribing.
+    Waits 2.0 seconds of silence after speech ends before transcribing.
     """
     import numpy as np
     import speech_recognition as sr
@@ -178,6 +220,12 @@ def capture_command_phrase(
         rms = float(np.sqrt(np.mean(samples ** 2)))
         thr = threshold_fn() if threshold_fn else 30.0
 
+        # Stream live RMS to Pet UI (bars animate while capturing command)
+        try:
+            ui_q.put_nowait({"state": "RMS", "level": rms})
+        except Exception:
+            pass
+
         if not is_speaking_phrase:
             # Waiting for user to start speaking
             if rms > thr:
@@ -197,7 +245,7 @@ def capture_command_phrase(
 
             if rms < thr:
                 silence_counter += 1
-                # Visual pause countdown during the 5s wait
+                # Visual pause countdown during the silence wait
                 silence_secs = silence_counter * block_size / sample_rate
                 rem_wait = max(1, int(round(silence_wait_s - silence_secs)))
                 if silence_secs >= 1.0:
@@ -206,9 +254,10 @@ def capture_command_phrase(
                 silence_counter = 0
                 ui_q.put({"state": "LISTENING", "text": f"🎙️ listening ({elapsed}s)..."})
 
-            # Enforce 5.0s pause wait before starting transcribe
+
+            # Enforce silence pause wait before starting transcribe
             if silence_counter >= silence_blocks_needed:
-                log(f"⏱️ 5.0s silence completed. Starting transcription ({elapsed}s audio).")
+                log(f"⏱️ {silence_wait_s:.1f}s silence completed. Starting transcription ({elapsed}s audio).")
                 break
 
             if len(speech_buffer) >= max_blocks:
@@ -250,25 +299,54 @@ def audio_listener_worker(
     r = sr.Recognizer()
 
     wake_words = [
+        # ── Primary Nexus ──────────────────────────────────────────────────────
         "nexus", "hey nexus", "ok nexus", "hi nexus",
-        "jarvis", "hey jarvis", "ok jarvis", "hi jarvis",
-        "antigravity", "hey antigravity", "ok antigravity",
-        "vocalis", "hey vocalis", "ok vocalis",
-        "computer", "alexa", "gemini", "listen",
-        "bhai", "karan", "assistant", "wake up",
+        # ── Kavita (primary persona name) ──────────────────────────────────────
+        "kavita", "hey kavita", "ok kavita", "hi kavita",
+        "suno kavita", "kavita suno", "aye kavita",
+        # ── Sarika ─────────────────────────────────────────────────────────────
+        "sarika", "hey sarika", "ok sarika", "hi sarika",
+        "suno sarika",
+        # ── AI / Moto ──────────────────────────────────────────────────────────
+        "hey ai", "ok ai",
+        "moto", "hey moto", "ok moto",
+        # ── Legacy / Power-user aliases ────────────────────────────────────────
+        "jarvis", "hey jarvis", "ok jarvis",
+        "antigravity", "hey antigravity",
+        "vocalis", "hey vocalis",
+        "computer", "gemini",
+        # ── Casual Hindi triggers ──────────────────────────────────────────────
+        "bhai", "karan", "assistant",
+        "suno", "aye", "wake up",
+        "sun",  # short "sun" (listen in Hindi)
     ]
     phonetic_variants = [
+        # Nexus mishearings
         "nexas", "nexis", "nexa", "texas", "next us", "nikos", "necas",
-        "jarvis", "jarvez", "jarves", "service", "travis", "harvest",
-        "antigravity", "anti gravity", "vocalist", "vocal is", "fox call is",
+        # Kavita mishearings
+        "kabita", "kavitha", "cavita", "kavit", "kabitha",
+        "sunno kavita", "sun kavita", "hey kavitha",
+        # Sarika mishearings
+        "sarica", "sharika", "sarika",
+        "sunno sarika", "sun sarika",
+        # Jarvis mishearings
+        "jarvez", "jarves", "service", "travis", "harvest",
+        # AI mishearings  
+        "hey eye", "hai ai", "hay ai",
+        # Moto mishearings
+        "motto", "motor", "moto is",
+        # Antigravity
+        "anti gravity", "vocalist", "vocal is", "fox call is",
+        # Casual
         "bhai", "shaktiman",
     ]
     all_wake = wake_words + phonetic_variants
 
     sample_rate = 16000
     block_size = 1024  # 64ms per block
-    # In standby single-breath detection, allow 2.8s pause before checking
-    standby_silence_blocks = int(2.8 * sample_rate / block_size)
+    # In standby single-breath detection, allow 0.8s pause before checking
+    # (reduced from 2.8s → instant wake reaction under 1 second)
+    standby_silence_blocks = int(0.8 * sample_rate / block_size)
     max_standby_blocks = int(25.0 * sample_rate / block_size)
 
     ambient_history = collections.deque(maxlen=40)
@@ -279,7 +357,7 @@ def audio_listener_worker(
         return max(24.0, ambient_floor * 3.0)
 
     ui_q.put({"state": "STANDBY", "text": "💤 nexus"})
-    log(f"🎤 SoundDevice Audio Worker online ({sample_rate}Hz mono, int16). 5s post-speech wait active.")
+    log(f"🎤 SoundDevice Audio Worker online ({sample_rate}Hz mono, int16). 2s post-speech wait active.")
 
     while not stop_event.is_set():
         if STOP_FILE.exists():
@@ -325,7 +403,7 @@ def audio_listener_worker(
                             ui_q=ui_q,
                             stop_event=stop_event,
                             initial_timeout_s=6.0,
-                            silence_wait_s=5.0,  # 5-second wait before transcribe
+                            silence_wait_s=2.0,  # 2-second wait before transcribe
                             max_phrase_s=90.0,
                             threshold_fn=get_current_threshold,
                             display_wake="click",
@@ -361,6 +439,13 @@ def audio_listener_worker(
                     rms = float(np.sqrt(np.mean(samples ** 2)))
                     threshold = get_current_threshold()
 
+                    # Stream live RMS to Pet UI every block (64ms cadence)
+                    # Pet uses this to drive real voice-reactive bars instead of fake sine waves
+                    try:
+                        ui_q.put_nowait({"state": "RMS", "level": rms})
+                    except queue.Full:
+                        pass
+
                     if not is_recording:
                         ambient_history.append(rms)
                         pre_speech_buffer.append(data.tobytes())
@@ -377,6 +462,12 @@ def audio_listener_worker(
                             speech_buffer = list(pre_speech_buffer)
                             speech_buffer.append(data.tobytes())
                             silence_counter = 0
+                            # Immediate visual: pet knows voice is incoming — show LISTENING
+                            # the instant RMS crosses threshold, BEFORE STT runs
+                            try:
+                                ui_q.put_nowait({"state": "LISTENING", "text": "👂 hearing..."})
+                            except Exception:
+                                pass
                             if monitor and sys.stdout is not None:
                                 sys.stdout.write(" -> [VOICE DETECTED]\n")
                                 sys.stdout.flush()
@@ -403,7 +494,15 @@ def audio_listener_worker(
 
                             # Ignore tiny audio noise (<0.35s)
                             if len(raw_pcm) < int(0.35 * sample_rate * 2):
+                                # Too short to be a wake word — revert silently
+                                ui_q.put_nowait({"state": "STANDBY", "text": "💤 nexus"})
                                 continue
+
+                            # Show "checking..." during STT — keeps pet in LISTENING visually
+                            try:
+                                ui_q.put_nowait({"state": "LISTENING", "text": "🔍 checking..."})
+                            except Exception:
+                                pass
 
                             # Normalize audio volume
                             normalized_pcm = normalize_pcm(raw_pcm)
@@ -411,6 +510,8 @@ def audio_listener_worker(
 
                             raw_text = transcribe_audio(r, audio_data)
                             if not raw_text:
+                                # Nothing heard — snap back to standby
+                                ui_q.put({"state": "STANDBY", "text": "💤 nexus"})
                                 continue
 
                             clean = raw_text.strip()
@@ -423,7 +524,8 @@ def audio_listener_worker(
                                     break
 
                             if not matched_wake:
-                                # Casual room chatter - drop silently
+                                # Room chatter — snap back to standby immediately
+                                ui_q.put({"state": "STANDBY", "text": "💤 nexus"})
                                 if monitor and sys.stdout is not None:
                                     print(f"   [Ignored Chatter]: \"{clean}\"")
                                 continue
@@ -437,7 +539,7 @@ def audio_listener_worker(
                             # 2. Play wake chime earcon
                             play_wake_chime()
 
-                            # 3. Light up Pet UI immediately
+                            # 3. Light up Pet UI — LISTENING state shown immediately on wake word confirm
                             ui_q.put({"state": "LISTENING", "text": "🎙️ listening..."})
 
                             # 4. Check if command was spoken in same breath
@@ -445,7 +547,7 @@ def audio_listener_worker(
                             command = clean[idx:].strip(" ,.?!")
 
                             if not command:
-                                # User said only wake-word: capture full long prompt with 5s wait
+                                # User said only wake-word — capture full prompt with 3s silence wait
                                 ui_q.put({"state": "LISTENING", "text": "🎙️ speak now..."})
                                 command, _ = capture_command_phrase(
                                     stream=stream,
@@ -455,13 +557,17 @@ def audio_listener_worker(
                                     ui_q=ui_q,
                                     stop_event=stop_event,
                                     initial_timeout_s=6.0,
-                                    silence_wait_s=5.0,  # 5-second wait before transcribe
+                                    silence_wait_s=3.0,  # 3-second silence before transcribe
                                     max_phrase_s=90.0,
                                     threshold_fn=get_current_threshold,
                                     display_wake=display_wake,
                                 )
                             else:
+                                # Same-breath command: hold LISTENING visible briefly so user
+                                # can see the pet acknowledged the wake word before processing
+                                time.sleep(0.35)
                                 ui_q.put({"state": "TRANSCRIBING", "text": "⚡ thinking..."})
+
 
                             if not command:
                                 command = "status"
@@ -510,11 +616,23 @@ def run_daemon(headless: bool = False, monitor: bool = False):
             import psutil
             if existing_pid != os.getpid() and psutil.pid_exists(existing_pid):
                 proc = psutil.Process(existing_pid)
-                if "python" in proc.name().lower():
-                    log(f"⚠️ Daemon already running (PID: {existing_pid}). Exiting.")
+                cmdline = " ".join(proc.cmdline()).lower()
+                if "vocalis_daemon" in cmdline or "pet.py" in cmdline:
+                    log(f"⚡ Pet already running (PID: {existing_pid}). Triggering Evoke / Push-to-Talk.")
+                    EVOKE_FILE.write_text("evoke", encoding="utf-8")
+                    try:
+                        from vocalis.tools.notifications import play_wake_chime
+                        play_wake_chime()
+                    except Exception:
+                        pass
                     sys.exit(0)
+                else:
+                    log(f"⚠️ Stale PID file found (PID: {existing_pid} is {proc.name()}, not daemon). Overwriting.")
+                    PID_FILE.unlink(missing_ok=True)
+            else:
+                PID_FILE.unlink(missing_ok=True)
         except Exception:
-            pass
+            PID_FILE.unlink(missing_ok=True)
 
     with open(PID_FILE, "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
@@ -525,13 +643,19 @@ def run_daemon(headless: bool = False, monitor: bool = False):
     action_q = queue.Queue()
     stop_event = threading.Event()
 
+    cleaned_up = False
+
     def cleanup():
+        nonlocal cleaned_up
+        if cleaned_up:
+            return
+        cleaned_up = True
         stop_event.set()
         if PID_FILE.exists():
             try:
-                with open(PID_FILE, "r", encoding="utf-8") as f:
-                    if int(f.read().strip()) == os.getpid():
-                        PID_FILE.unlink(missing_ok=True)
+                content = PID_FILE.read_text(encoding="utf-8").strip()
+                if content and int(content) == os.getpid():
+                    PID_FILE.unlink(missing_ok=True)
             except Exception:
                 pass
         log("👋 Vocalis Listener Daemon stopped cleanly.")
@@ -566,6 +690,8 @@ def run_daemon(headless: bool = False, monitor: bool = False):
                 on_close=cleanup,
             )
             pet.run()
+        except KeyboardInterrupt:
+            pass
         except Exception as e:
             log(f"⚠️ Pet UI error: {e}. Falling back to CLI loop.")
             try:
@@ -573,8 +699,8 @@ def run_daemon(headless: bool = False, monitor: bool = False):
                     time.sleep(0.5)
             except KeyboardInterrupt:
                 pass
-            finally:
-                cleanup()
+        finally:
+            cleanup()
 
 
 if __name__ == "__main__":
